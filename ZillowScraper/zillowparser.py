@@ -1,7 +1,9 @@
-
+import sys
+sys.dont_write_bytecode = True
 import time
 import requests
 import json
+from json import JSONDecodeError
 from urllib.parse import urlencode
 import re
 import datetime
@@ -9,8 +11,6 @@ import random
 import os
 import logging
 import logging.handlers
-from threading import Timer
-
 from scheduledtask import scheduledtask
 
 
@@ -34,7 +34,7 @@ def create_logger():
     global logger
     log_dir = "logging/"
     log_file = log_dir + "Zillow_log"
-
+    
     if not os.path.exists(log_dir):
         os.mkdir(log_dir)
     
@@ -53,19 +53,27 @@ class ZillowParser:
 
     REQUEST_HEADERS = {
             "accept-language": "en-US,en;q=0.9",
-            "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/104.0.0.0 Safari/537.36",
+            "user-agent": "Mozilla/3.0 (Macintosh; Intel Mac OS X 9_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/105.0.0.0 Safari/537.36",
             "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8",
             "accept-language": "en-US;en;q=0.9",
-            "accept-encoding": "gzip, deflate, br"
+            "accept-encoding": "gzip, deflate, br",
+            "authority": "www.zillow.com",
+            "cache-control": "max-age=0",
+            "sec-fetch-site": "same-origin"
         }
     
     ADDRESS_REGEX_FH = '/homedetails/((?i)[^\s]+)-'
     ADDRESS_REGEX_BH = '-[A-Z]{2}-[0-9]{5}/'
-
     URL_PREFIX = "https://www.zillow.com"
     GEOLOCATION_URL = URL_PREFIX + "/homes/{},-{}_rb"
     BULK_LISTINGS_URL = URL_PREFIX + "/search/GetSearchPageState.htm?"
 
+    SQUARE_FEET_REGEX= "Living area range<!-- -->: <!-- -->(\d{3,6}\s-\s\d{3,6}) Square Feet<"
+    BUILD_YEAR_REGEX= "Year built<!-- -->: <!-- -->(\d{4})<"
+    LISTING_AGENTS_REGEX= r'\\\"agentName\\\":\\\"([^\\\"]+)\\\"'
+
+    FIELDS = ("price", "latitude", "longitude", "price", "beds", "city", "state", "zipcode", "baths", "zipcode", "homeType", "detailUrl", "streetAddress", "pgapt", "lotAreaValue")
+    
     def __init__(self):
         self.zillow_session = None
         self.city = None
@@ -76,12 +84,12 @@ class ZillowParser:
         self.sleep_interval = 60 * 30
         self.purge_listings_interval = 60 * 24
         self.listings = {"listings": {}, "timestamp": "None", "listingsCount": 0}
-        self.directory_path = "data"
+        self.directory_path = "data/"
 
         create_logger()
 
 
-    def init_zillow_parser(self, city, state, directory_path="data/", filters=None, listing_attributes=None):
+    def init_zillow_parser(self, city, state, directory_path=None, filters=None, listing_attributes=None):
         self.city = city
         self.state = state
 
@@ -101,7 +109,7 @@ class ZillowParser:
     def init_geo_bounds(self):
         geo_bounds = None
 
-        response = self.zillow_session.get(self.GEOLOCATION_URL.format(self.city,self.state) ,headers=self.REQUEST_HEADERS)
+        response = self.zillow_session.get(self.GEOLOCATION_URL.format(self.city, self.state) ,headers=self.REQUEST_HEADERS)
 
         geo_location_regex = re.findall(r"<!--({.+})-->", response.text)
 
@@ -113,28 +121,55 @@ class ZillowParser:
 
     def parse_all_listings(self, parameters):
         data = None
+        try:
+            response = self.zillow_session.get(self.BULK_LISTINGS_URL + urlencode(parameters), headers=self.REQUEST_HEADERS)
+            if response.text:
+                data = json.loads(response.text)["cat1"]["searchResults"]["mapResults"]
+                del response
 
-        response = self.zillow_session.get(self.BULK_LISTINGS_URL + urlencode(parameters), headers=self.REQUEST_HEADERS)
-        if response.text:
-            data = json.loads(response.text)["cat1"]["searchResults"]["mapResults"]
-            
-        return data
+            return data
 
+        except JSONDecodeError as e:
+            logger.error("parse_all_listings()======> Bad JSON value: {}".format(e.msg))
+            logger.error("parse_all_listings()======> EXCEPTION: {}".format(response.text))
+
+            return data
 
     def construct_address_regex(self, listing_city):
         city = listing_city.replace(" ","-")
         return self.ADDRESS_REGEX_FH + city + self.ADDRESS_REGEX_BH
 
+
+    def get_additional_info(self, listing):
+        listing_details = self.zillow_session.get(listing["detailUrl"], headers=self.REQUEST_HEADERS)
+
+        sq_ft = re.findall(ZillowParser.SQUARE_FEET_REGEX, listing_details.text)
+        if sq_ft:
+            listing["squarefeet"]= sq_ft[0]
+            logger.info("Square Feet: {}".format(sq_ft[0]))
+        
+        year_built = re.findall(ZillowParser.BUILD_YEAR_REGEX, listing_details.text)
+        if year_built:
+            listing["buildyear"]= year_built[0]
+            logger.info("Build Year: {}".format(year_built[0]))
+
+        agents = re.findall(ZillowParser.LISTING_AGENTS_REGEX, listing_details.text)
+        logger.info(len(agents))
+        if agents:
+            listing["agents"]= agents
+            logger.info("Agents: {}".format(agents))
+
+    
     def parse_square_footage(self, listing):
         listing_response = self.zillow_session.get(listing["detailUrl"], headers=self.REQUEST_HEADERS)
         regex_sf = r'Living area range<!-- -->: <!-- -->(\d{3,6}\s-\s\d{3,6}) Square Feet<'
         regex_year= r'Year built<!-- -->: <!-- -->(\d{4})<'
         test= r'\\"pals\\":(\[.+\]),\\\"listingAccountUserId\\\"'
-        test2= r'\\\"listingAgents\\\":(\[[^}]*}\]),\\\"mlsDisclaimer\\\"'
-        
+        test2= r'\\\"listingAgents\\\":(\[{[^}]*}\]),\\\"mlsDisclaimer\\\"'
+        test3= r'\\\"agentName\\\":\\\"([^\\\"]+)\\\"'
         sq_footage = re.findall(regex_sf, listing_response.text)
         
-        agent = re.findall(test2, listing_response.text)
+        agent = re.findall(test3, listing_response.text)
         logger.info(len(agent))
         
         logger.info("AGENT: {}".format(agent))
@@ -154,18 +189,13 @@ class ZillowParser:
             
         except Exception as e:
             logger.error(e.with_traceback)
-    
-        listing["address"] = None
-        return listing["address"]
+        return None
     
     def get_listing_directory(self, listing):
         return "{}/{}/{}".format(listing['state'], listing['city'].replace(" ","-"), listing["address"])
 
     def validate_listing(self, listing):
-        required_attributes = ["city","state","price"]
-    
-        result = [attrib for attrib in required_attributes if attrib not in listing or listing[attrib] == ""]
-
+        result = [attrib for attrib in ["city", "state", "price"] if attrib not in listing or listing[attrib] == ""]
         return len(result) == 0, result
 
     def get_listings(self, get_images=False, num_images=5):
@@ -175,7 +205,7 @@ class ZillowParser:
                 "mapBounds": self.geo_bounds,
                 "filterState": {
                     "price": {
-                        "max": 360000,
+                        "max": 350000,
                         "min": None
                     },
                     "isAllHomes":{
@@ -203,11 +233,11 @@ class ZillowParser:
                         "value": False
                     },
                     "beds": {
-                        "min": 1,
+                        "min": 3,
                         "max": None
                     },
                     "baths": {
-                        "min": 1,
+                        "min": 2,
                         "max": None
                     },
                     "doz":{
@@ -219,14 +249,20 @@ class ZillowParser:
                 "cat1": ["mapResults", "listResults"],
                 "cat2":[]
             },
-            "requestId": random.randint(0,100)
+            "requestId": random.randint(0,10)
         }
         
-        listings = {"listings": {},
-                         "timestamp": None,
-                         "listingsCount": 0}
+        listings = {
+            "listings": {},
+            "timestamp": None,
+            "listingsCount": 0
+        }
 
         all_listings = self.parse_all_listings(parameters)
+
+        if not all_listings:
+            logger.error("get_listings()======> Failed to get all_listings.....")
+            return
 
         logger.info("get_listings()======> ")
         logger.info("get_listings()======> Got {} listings".format(len(all_listings)))
@@ -237,6 +273,7 @@ class ZillowParser:
             new_listing = self.create_listing(all_listings[i])
 
             valid_listing, missing_attributes = self.validate_listing(new_listing)
+            
             if not valid_listing:
                 logger.warning("get_listings()======> Failed to create listing ({}/{}) {} because required attributes were not found {}".format(i, len(all_listings), new_listing, missing_attributes))
                 continue
@@ -247,8 +284,11 @@ class ZillowParser:
                 logger.warning("get_listings()======> Failed to create listing ({}/{}) {} because no address was found".format(i, len(all_listings), new_listing))
                 continue
             
+            
             # TODO: implement square_footage 
-            self.parse_square_footage(new_listing)
+            #self.parse_square_footage(new_listing)
+
+            self.get_additional_info(new_listing)
 
             listings["listings"][address] = new_listing
             
@@ -280,8 +320,8 @@ class ZillowParser:
             
             logger.info("get_listings()======> Added listing ({}/{}) {} and retreived {} images".format(i, len(all_listings), address, max_images))
 
-        listings['timestamp'] = datetime.datetime.now().strftime("%m_%d_%Y_%I:%M_{}_{}".format(self.city, self.state))
-        listings['listingsCount'] = len(self.listings['listings'])
+        listings['timestamp'] = datetime.datetime.now().strftime("%m-%d-%Y-%I:%M-{}-{}".format(self.city, self.state))
+        listings['listingsCount'] = len(listings['listings'])
         
         logger.info("get_listings()======> Successfully finished creating {} listings".format(len(listings["listings"])))
         logger.info("get_listings()======> Failed to add {} listings".format(len(all_listings) - len(listings["listings"])))
@@ -310,8 +350,7 @@ class ZillowParser:
 
     def create_listing(self, listing_json):
         new_listing = {}
-        attribs = ["price", "latitude", "longitude", "price", "beds", "city", "state", "zipcode", "baths", "zipcode", "homeType", "detailUrl", "streetAddress"]
-        self.flatten_dict(listing_json, new_listing, attribs)
+        self.flatten_dict(listing_json, new_listing, ZillowParser.FIELDS)
 
         return new_listing
 
@@ -324,14 +363,12 @@ class ZillowParser:
 if __name__ == "__main__":
     zp = ZillowParser()
     zp.init_zillow_parser("Greensboro", "NC")
-    logger.info("main()======> Zillow Parser has started running {}")
+    logger.info("main()======> Zillow Parser has started running...")
 
     def hello():
         logger.info("hello, world")
-    t = scheduledtask(10, hello)
-    t.start()
-
-
+    #t = scheduledtask(10, hello)
+    #t.start()
     while True:
         if not os.path.exists(zp.directory_path):
             # initial entrypoint for first call 
@@ -339,12 +376,12 @@ if __name__ == "__main__":
             os.makedirs(zp.directory_path)
             
             if zp.get_listings(num_images=5):
-                logger.info("got listings")
+                logger.info("got listings sleeping for 1 hour")
                 with open(zp.get_file_name(), 'w') as handler:
                     handler.write(json.dumps(zp.listings, indent=4))
             else:
                 logger.info("couldn't get any listings")
-            time.sleep(10 * 60)
+            time.sleep(zp.sleep_interval)
             continue
         
 
@@ -361,10 +398,10 @@ if __name__ == "__main__":
             # compare old and new listings
             # rewrite new listings.json
             if zp.get_listings(num_images=5):
-                logger.info("got listings")
+                logger.info("got listings sleeping for 1 hour")
                 with open(zp.get_file_name(), 'w') as handler:
                     handler.write(json.dumps(zp.listings, indent=4))
             else:
                 logger.info("couldn't get any listings")
-            time.sleep(10 * 60)
+            time.sleep(zp.sleep_interval)
 

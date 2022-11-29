@@ -10,15 +10,26 @@ d = json.loads(data.read())
 
 new_mapping = {
     "mappings":{
+         "dynamic": "strict",
          "properties":{
-            "address":{
-               "type":"text",
-               "fields":{
-                  "keyword":{
-                     "type":"keyword",
-                     "ignore_above":256
+            "latLong": {
+               "properties": {
+                  "latitude":{
+                     "type": "text"
+                  },
+                  "longitude": {
+                     "type": "text"
                   }
                }
+            },
+            "latitude": {
+               "type": "text"
+            },
+            "longitude": {
+               "type": "text"
+            },
+            "address":{
+               "type":"text"
             },
             "baths":{
                "type":"float"
@@ -27,90 +38,45 @@ new_mapping = {
                "type":"long"
             },
             "city":{
-               "type":"text",
-               "fields":{
-                  "keyword":{
-                     "type":"keyword",
-                     "ignore_above":256
-                  }
-               }
+               "type":"text"
             },
             "detailUrl":{
-               "type":"text",
-               "fields":{
-                  "keyword":{
-                     "type":"keyword",
-                     "ignore_above":256
-                  }
-               }
+               "type":"text"
             },
             "homeType":{
-               "type":"text",
-               "fields":{
-                  "keyword":{
-                     "type":"keyword",
-                     "ignore_above":256
-                  }
-               }
+               "type":"text"
             },
             "loc":{
                 "type": "geo_point"
             },
             "price":{
-               "type":"text",
-               "fields":{
-                  "keyword":{
-                     "type":"keyword",
-                     "ignore_above":256
-                  }
-               }
+               "type":"text"
             },
             "state":{
-               "type":"text",
-               "fields":{
-                  "keyword":{
-                     "type":"keyword",
-                     "ignore_above":256
-                  }
-               }
+               "type":"text"
             },
             "zipcode":{
-               "type":"text",
-               "fields":{
-                  "keyword":{
-                     "type":"keyword",
-                     "ignore_above":256
-                  }
-               }
+               "type":"text"
             }
          }
     }
 }
-
-
-m = {
-    "mappings": {
-    "properties": {
-      "loc": {
-        "type": "geo_point"
-      }
-    }
-  }
-}
-   
-
 #print(es.indices.put_mapping(index="listings", body=new_mapping))
 #print(es.indices.get_mapping(index="listings"))
 
 #exit()
-#if es.indices.exists(index="listings"):
-#    es.indices.delete(index="listings")
+
+
+if es.indices.exists(index="listings"):
+    es.indices.delete(index="listings")
 
 if not es.indices.exists(index="listings"):
-    es.indices.create(index="listings", body=m)
+    es.indices.create(index="listings", body=new_mapping)
+es.indices.refresh(index="listings")
 
 for listing in d["listings"]:
     resp = es.index(index="listings", body=d['listings'][listing])
+es.indices.refresh(index="listings")
 
 #resp = es.get(index="listings", id=1)
 #print(resp['_source'])
