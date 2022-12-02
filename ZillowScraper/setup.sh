@@ -9,18 +9,17 @@ es_username="elastic"
 es_password="password"
 
 
-elasticsearch_installed=$(docker images --filter reference=$elastic_container_name:$elasticsearch_version | grep $elasticsearch_version 2>/dev/null)
-kibana_installed=$(docker images --filter reference=$kibana_container_name:$kibana_version | grep $kibana_version 2>/dev/null)
-
-elasticsearch_created=$(docker ps -a --filter name=$elastic_container_name | grep $elastic_container_name 2>/dev/null)
-kibana_created=$(docker ps -a --filter name=$kibana_container_name | grep $kibana_container_name 2>/dev/null)
+elasticsearch_installed=$((docker images --filter reference=$elastic_container_name:$elasticsearch_version | grep $elasticsearch_version) 2>/dev/null)
+kibana_installed=$((docker images --filter reference=$kibana_container_name:$kibana_version | grep $kibana_version) 2>/dev/null)
+elasticsearch_created=$((docker ps -a --filter name=$elastic_container_name | grep $elastic_container_name) 2>/dev/null)
+kibana_created=$((docker ps -a --filter name=$kibana_container_name | grep $kibana_container_name) 2>/dev/null)
 
 function check_exit_status() {
     [ $? -ne 0 ] && exit 1
 }
 
 function check_docker_running() {
-    docker ps 2>&1> /dev/null
+    docker ps 1>/dev/null 2>&1
     if [ $? -eq 1 ]; then
         echo "Docker is not running please start"
         exit 1

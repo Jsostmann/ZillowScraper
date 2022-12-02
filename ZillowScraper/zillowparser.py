@@ -62,7 +62,7 @@ class ZillowParser:
             "sec-fetch-site": "same-origin"
         }
     
-    ADDRESS_REGEX_FH = '/homedetails/((?i)[^\s]+)-'
+    ADDRESS_REGEX_FH = '/homedetails/((?:[^\s]+))-'
     ADDRESS_REGEX_BH = '-[A-Z]{2}-[0-9]{5}/'
     URL_PREFIX = "https://www.zillow.com"
     GEOLOCATION_URL = URL_PREFIX + "/homes/{},-{}_rb"
@@ -159,25 +159,6 @@ class ZillowParser:
             listing["agents"]= agents
             logger.info("Agents: {}".format(agents))
 
-    
-    def parse_square_footage(self, listing):
-        listing_response = self.zillow_session.get(listing["detailUrl"], headers=self.REQUEST_HEADERS)
-        regex_sf = r'Living area range<!-- -->: <!-- -->(\d{3,6}\s-\s\d{3,6}) Square Feet<'
-        regex_year= r'Year built<!-- -->: <!-- -->(\d{4})<'
-        test= r'\\"pals\\":(\[.+\]),\\\"listingAccountUserId\\\"'
-        test2= r'\\\"listingAgents\\\":(\[{[^}]*}\]),\\\"mlsDisclaimer\\\"'
-        test3= r'\\\"agentName\\\":\\\"([^\\\"]+)\\\"'
-        sq_footage = re.findall(regex_sf, listing_response.text)
-        
-        agent = re.findall(test3, listing_response.text)
-        logger.info(len(agent))
-        
-        logger.info("AGENT: {}".format(agent))
-
-        if sq_footage:
-            for s in sq_footage: 
-                logger.info("Square Footage: {}".format(s))
-
     def parse_address(self, listing):
         try:
             address_regex = self.construct_address_regex(listing["city"])
@@ -266,7 +247,6 @@ class ZillowParser:
 
         logger.info("get_listings()======> ")
         logger.info("get_listings()======> Got {} listings".format(len(all_listings)))
-        logger.info("get_listings()======> Attempting to create {} listings".format(len(all_listings)))
 
         for i in range(len(all_listings)):
 
@@ -283,10 +263,6 @@ class ZillowParser:
             if not address:
                 logger.warning("get_listings()======> Failed to create listing ({}/{}) {} because no address was found".format(i, len(all_listings), new_listing))
                 continue
-            
-            
-            # TODO: implement square_footage 
-            #self.parse_square_footage(new_listing)
 
             self.get_additional_info(new_listing)
 
@@ -320,7 +296,7 @@ class ZillowParser:
             
             logger.info("get_listings()======> Added listing ({}/{}) {} and retreived {} images".format(i, len(all_listings), address, max_images))
 
-        listings['timestamp'] = datetime.datetime.now().strftime("%m-%d-%Y-%I:%M-{}-{}".format(self.city, self.state))
+        listings['timestamp'] = datetime.datetime.now().strftime("%m-%d-%Y-%I_%M-{}-{}".format(self.city, self.state))
         listings['listingsCount'] = len(listings['listings'])
         
         logger.info("get_listings()======> Successfully finished creating {} listings".format(len(listings["listings"])))
@@ -333,9 +309,9 @@ class ZillowParser:
         for atrib in dict_obj:
             if isinstance(dict_obj[atrib], dict):
                 if atrib == "latLong":
-                    listing_obj["loc"] = {}
-                    listing_obj["loc"]["lat"] = dict_obj[atrib]["latitude"]
-                    listing_obj["loc"]["lon"] = dict_obj[atrib]["longitude"]
+                    #listing_obj["loc"] = {}
+                    #listing_obj["loc"]["lat"] = dict_obj[atrib]["latitude"]
+                    #listing_obj["loc"]["lon"] = dict_obj[atrib]["longitude"]
                     listing_obj[atrib] = dict_obj[atrib]
                     continue
                 self.flatten_dict(dict_obj[atrib], listing_obj, atribs)
@@ -358,12 +334,13 @@ class ZillowParser:
         logger.info(os.listdir("data"))
 
     def get_file_name(self):
-        return self.directory_path + self.listings["timestamp"] + ".json"
+        return str(self.directory_path + self.listings["timestamp"] + ".json")
 
 if __name__ == "__main__":
     zp = ZillowParser()
     zp.init_zillow_parser("Greensboro", "NC")
     logger.info("main()======> Zillow Parser has started running...")
+
 
     def hello():
         logger.info("hello, world")
